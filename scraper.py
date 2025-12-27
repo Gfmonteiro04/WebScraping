@@ -6,165 +6,161 @@ from random import uniform
 import os
 from urllib.parse import urlparse
 
-# 1. Configuração baseada no contexto fornecido
-CSV_PATH = '/home/ubuntu/upload/BancoFinal.csv'
+# --- CONFIGURAÇÕES ---
+# Nome do novo arquivo de entrada
+CSV_PATH = 'C:/Users/gfmon/Downloads/BancoFinal_Seletos.csv' 
+
+# Arquivo onde será salvo o progresso (pode ser o mesmo ou um novo)
+OUTPUT_CSV_PATH = 'BancoFinal_Seletos_Atualizado.csv' 
+
 OUTPUT_DIR = 'downloaded_images'
+BATCH_SIZE = 50 
+
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Cabeçalhos completos para evitar o erro 403 (Acesso Negado)
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    "Referer": "https://www.google.com/",
-    "Accept-Language": "en-US,en;q=0.9,pt-BR;q=0.8,pt;q=0.7",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
+    "Referer": "https://www.fragrantica.com/",
+    "Accept-Language": "en-US,en;q=0.9",
     "Connection": "keep-alive"
 }
 
 def get_image_url(perfume_url, session):
-    """Busca a página e extrai a URL da imagem."""
     try:
-        print(f"Acessando: {perfume_url}")
-        # Pausa aleatória para evitar bloqueio por requisições rápidas
         time.sleep(uniform(1.5, 3.5))
-
-        response = session.get(perfume_url, timeout=15)
-        response.raise_for_status() # Levanta exceção para códigos de status ruins (4xx ou 5xx)
-
+        response = session.get(perfume_url, timeout=20)
+        
+        if response.status_code == 403:
+            print(f"BLOQUEIO (403) em: {perfume_url}")
+            return "BLOQUEADO"
+            
+        response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        # Solução sugerida: buscar pela tag <picture> com itemprop="image"
-        picture_tag = soup.find("picture", {"itemprop": "image"})
-        
-        if not picture_tag:
-            print("AVISO: Tag <picture> não encontrada. Tentando seletor alternativo.")
-            # Tentativa alternativa: imagem principal dentro da div de conteúdo
+        img_tag = soup.find("img", {"itemprop": "image"})
+        if not img_tag:
             img_tag = soup.find("img", class_="perfume-main-image")
-            if not img_tag:
-                print("ERRO: Nenhuma tag de imagem principal encontrada.")
-                return None
-        else:
-            # A tag <picture> contém a tag <img>
-            img_tag = picture_tag.find("img")
-            if not img_tag:
-                print("ERRO: Tag <img> não encontrada dentro de <picture>.")
-                return None
 
-        # Solução sugerida: extrair preferencialmente o srcset
-        img_url = img_tag.get("srcset", "").split(" ")[0]
-        
-        # Se srcset estiver vazio, usa o src
-        if not img_url:
-            img_url = img_tag.get("src")
+        if img_tag:
+            if img_tag.get("srcset"):
+                img_url = img_tag.get("srcset").split(" ")[0]
+            else:
+                img_url = img_tag.get("src")
 
-        # O Fragrantica usa URLs relativas para as imagens. Precisamos torná-las absolutas.
-        if img_url and img_url.startswith('//'):
-            img_url = 'https:' + img_url
-        elif img_url and img_url.startswith('/'):
-            # Isso pode ser um problema se o domínio não for o mesmo, mas para o Fragrantica deve funcionar
-            parsed_url = urlparse(perfume_url)
-            img_url = f"{parsed_url.scheme}://{parsed_url.netloc}{img_url}"
-        
-        if img_url:
-            print(f"URL da imagem encontrada: {img_url}")
-            return img_url
-        
+            if img_url:
+                if img_url.startswith('//'):
+                    img_url = 'https:' + img_url
+                elif img_url.startswith('/'):
+                    parsed_url = urlparse(perfume_url)
+                    img_url = f"{parsed_url.scheme}://{parsed_url.netloc}{img_url}"
+                return img_url
         return None
 
-    except requests.exceptions.RequestException as e:
-        print(f"ERRO de requisição para {perfume_url}: {e}")
-        return None
     except Exception as e:
-        print(f"ERRO inesperado ao processar {perfume_url}: {e}")
+        print(f"Erro ao extrair URL: {e}")
         return None
 
 def download_image(img_url, session, output_path):
-    """Baixa a imagem e salva no disco."""
     try:
-        print(f"Baixando imagem de: {img_url}")
-        # Pausa aleatória antes de baixar a imagem
-        time.sleep(uniform(0.5, 1.5))
-        
-        # O download da imagem também precisa da sessão e dos headers
-        img_response = session.get(img_url, stream=True, timeout=15)
+        if not img_url or img_url == "BLOQUEADO": return False
+        time.sleep(uniform(0.5, 1.0))
+        img_response = session.get(img_url, stream=True, timeout=20)
         img_response.raise_for_status()
-
         with open(output_path, 'wb') as f:
             for chunk in img_response.iter_content(1024):
                 f.write(chunk)
-        
-        print(f"Imagem salva em: {output_path}")
         return True
-    except requests.exceptions.RequestException as e:
-        print(f"ERRO ao baixar a imagem {img_url}: {e}")
-        return False
     except Exception as e:
-        print(f"ERRO inesperado ao salvar a imagem: {e}")
+        print(f"Erro download: {e}")
         return False
+
+def load_data():
+    try:
+        # MUDANÇA 1: Adicionado sep=';' para ler o formato novo corretamente
+        df = pd.read_csv(CSV_PATH, sep=';')
+    except FileNotFoundError:
+        print(f"Arquivo {CSV_PATH} não encontrado.")
+        return None
+
+    # Verifica se existe um arquivo de progresso para retomar
+    if os.path.exists(OUTPUT_CSV_PATH):
+        print("Retomando do arquivo de progresso...")
+        try:
+            # Também lemos o progresso com ;
+            df_progress = pd.read_csv(OUTPUT_CSV_PATH, sep=';')
+            if len(df_progress) == len(df):
+                df = df_progress
+        except: pass
+    
+    # Se a coluna não existir, cria. Se existir, mantém o que tem.
+    if 'caminho_imagem_local' not in df.columns:
+        df['caminho_imagem_local'] = ''
+        
+    return df
 
 def main():
-    """Função principal para processar o CSV."""
-    try:
-        # Tenta ler o CSV
-        df = pd.read_csv(CSV_PATH)
-    except FileNotFoundError:
-        print(f"ERRO: Arquivo CSV não encontrado em {CSV_PATH}")
-        return
-    except Exception as e:
-        print(f"ERRO ao ler o arquivo CSV: {e}")
-        return
+    df = load_data()
+    if df is None: return
 
-    # Adiciona a nova coluna para o caminho da imagem
-    # O nome da coluna de links é a segunda coluna (índice 1)
-    link_column = df.columns[1]
-    df['caminho_imagem_local'] = ''
-    
-    # Cria uma sessão persistente com os headers
+    # A URL continua sendo a segunda coluna (índice 1)
+    link_column = df.columns[1] 
     session = requests.Session()
     session.headers.update(HEADERS)
 
-    # Itera sobre as linhas do DataFrame
+    total_rows = len(df)
+    processed_count = 0
+
+    print(f"Iniciando processamento de {total_rows} linhas...")
+
     for index, row in df.iterrows():
-        perfume_url = row[link_column]
-        
-        if not isinstance(perfume_url, str) or not perfume_url.startswith('http'):
-            print(f"AVISO: Linha {index} tem URL inválida: {perfume_url}. Pulando.")
+        # Lógica inteligente: Pula se já tem algo escrito na coluna de imagem
+        if pd.notna(row['caminho_imagem_local']) and str(row['caminho_imagem_local']).strip() != "":
             continue
 
-        # 1. Extrair a URL da imagem
+        perfume_url = row[link_column]
+        
+        if not isinstance(perfume_url, str) or 'http' not in perfume_url:
+            # Marca como inválido apenas se estiver vazio/errado
+            df.at[index, 'caminho_imagem_local'] = 'URL_INVALIDA'
+            continue
+
+        print(f"[{index}/{total_rows}] Processando...", end='\r')
+
         img_url = get_image_url(perfume_url, session)
 
+        if img_url == "BLOQUEADO":
+            print(f"\nBloqueio detectado. Salvando progresso e parando.")
+            break 
+
         if img_url:
-            # 2. Definir o nome do arquivo local
-            # Usa o ID da linha (primeira coluna) e o nome do perfume (terceira coluna) para o nome do arquivo
-            # O ID está na coluna 0, o nome do perfume na coluna 2
             try:
-                perfume_id = row[df.columns[0]]
-                perfume_name = row[df.columns[2]].replace('-', '_').replace(' ', '_')
+                p_id = row[df.columns[0]] # ID
+                p_name = str(row[df.columns[2]]).replace(' ', '_').replace('/', '-').replace('\\', '-') # Nome
+                ext = 'png' if '.png' in img_url else 'jpg'
                 
-                # Tenta obter a extensão da URL da imagem
-                path_parts = urlparse(img_url).path.split('.')
-                extension = path_parts[-1] if len(path_parts) > 1 else 'jpg' # Default para jpg
-                
-                filename = f"{perfume_id}_{perfume_name}.{extension}"
+                filename = f"{p_id}_{p_name}.{ext}"
                 output_path = os.path.join(OUTPUT_DIR, filename)
 
-                # 3. Baixar a imagem
                 if download_image(img_url, session, output_path):
-                    # 4. Salvar o caminho local no DataFrame
-                    df.loc[index, 'caminho_imagem_local'] = output_path
+                    df.at[index, 'caminho_imagem_local'] = output_path
+                    print(f" -> OK: {filename}                    ")
                 else:
-                    df.loc[index, 'caminho_imagem_local'] = 'ERRO_DOWNLOAD'
-            except Exception as e:
-                print(f"ERRO ao processar a linha {index}: {e}")
-                df.loc[index, 'caminho_imagem_local'] = 'ERRO_PROCESSAMENTO'
+                    df.at[index, 'caminho_imagem_local'] = 'ERRO_DOWNLOAD'
+            except Exception:
+                df.at[index, 'caminho_imagem_local'] = 'ERRO_IO'
         else:
-            df.loc[index, 'caminho_imagem_local'] = 'ERRO_URL_NAO_ENCONTRADA'
+            df.at[index, 'caminho_imagem_local'] = 'IMAGEM_NAO_ENCONTRADA'
 
-    # 5. Salvar o DataFrame atualizado
-    output_csv_path = 'BancoFinal_com_imagens.csv'
-    df.to_csv(output_csv_path, index=False)
-    print(f"\nProcessamento concluído. Arquivo atualizado salvo em: {output_csv_path}")
+        processed_count += 1
+
+        if processed_count % BATCH_SIZE == 0:
+            # MUDANÇA 2: Salvamos com ; para manter o padrão
+            df.to_csv(OUTPUT_CSV_PATH, sep=';', index=False)
+            print(f"\n--- Checkpoint salvo na linha {index} ---")
+
+    # MUDANÇA 2 (Final): Salvamos com ;
+    df.to_csv(OUTPUT_CSV_PATH, sep=';', index=False)
+    print(f"\nProcessamento finalizado! Arquivo salvo em: {OUTPUT_CSV_PATH}")
 
 if __name__ == "__main__":
     main()

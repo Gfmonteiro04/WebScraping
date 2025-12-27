@@ -1,6 +1,6 @@
-downloaded_images/
+# downloaded_images/
 debug_screens/
 __pycache__/
-*.csv
+# *.csv
 .env
 venv/

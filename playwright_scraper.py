@@ -5,16 +5,21 @@ import time
 from random import uniform, randint
 import os
 
-# --- CONFIGURAÇÕES ---
-CSV_PATH = 'C:/Users/gfmon/Downloads/BancoFinal.csv'
-OUTPUT_CSV_PATH = 'BancoFinal_com_imagens.csv'
+# ==========================================
+# CONFIGURAÇÕES DE ARQUIVOS
+# ==========================================
+CSV_PATH = 'C:/Users/gfmon/Downloads/BancoFinal_Seletos.csv'
+OUTPUT_CSV_PATH = 'BancoFinal_Seletos_Atualizado.csv'
 OUTPUT_DIR = 'downloaded_images'
 
-# Tempo de castigo quando o bloqueio é detectado (em segundos)
-# 600 segundos = 10 minutos. Ajuste conforme necessário.
-TEMPO_CASTIGO =  1200
-
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# ==========================================
+# ESTRATÉGIA DE SOBREVIVÊNCIA (ANTI-SOFTBLOCK)
+# ==========================================
+TEMPO_CASTIGO_NORMAL = 1200  # 20 minutos
+TEMPO_CASTIGO_SEVERO = 13000 # ~3.6 horas
+LIMITE_TENTATIVAS_CURTAS = 2
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -22,7 +27,6 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-# Criamos uma exceção personalizada para controlar o fluxo
 class JohnWickError(Exception):
     pass
 
@@ -35,49 +39,45 @@ def human_scroll(page):
     except: pass
 
 def check_for_ban(page):
-    """Verifica se fomos bloqueados e lança o erro para fechar o navegador."""
     try:
         content = page.content()
         title = page.title()
         
+        if "Just a moment" in title:
+            print("Verificação Cloudflare. Aguardando 10s...")
+            time.sleep(10)
+
         is_blocked = (
             "Too Many Requests" in title or 
             "John Wick" in content or 
             "malicious activities" in content or
             page.locator('h1:has-text("429")').is_visible()
         )
-
         if is_blocked:
             raise JohnWickError("Bloqueio detectado!")
-            
     except JohnWickError:
-        raise # Re-levanta o erro para ser pego lá embaixo
-    except:
-        pass # Erros de leitura da página ignoramos
+        raise 
+    except: pass 
 
 def get_image_url(page, perfume_url):
     print(f"Acessando: {perfume_url}")
     
-    # Delay aleatório antes de ir
-    time.sleep(uniform(7.0, 12.0))
+    # Pausa Noturna (15s a 25s)
+    time.sleep(uniform(15.0, 25.0)) 
 
     try:
-        page.goto(perfume_url, wait_until="domcontentloaded", timeout=45000)
+        page.goto(perfume_url, wait_until="domcontentloaded", timeout=60000)
     except Exception:
         return None
 
-    # VERIFICAÇÃO CRÍTICA
     check_for_ban(page)
-
     human_scroll(page)
     
-    # Fecha pop-ups
     try:
         if page.locator('text="Continue without supporting us"').is_visible(timeout=1500):
             page.locator('text="Continue without supporting us"').click()
     except: pass
 
-    # Busca URL
     img_url = page.evaluate('''() => {
         const selectors = ['img[itemprop="image"]', '.cell.small-12 img[src*="fimgs"]', 'div.grid-x img[src*=".jpg"]'];
         for (const selector of selectors) {
@@ -91,13 +91,12 @@ def get_image_url(page, perfume_url):
         if img_url.startswith('//'): img_url = 'https:' + img_url
         print(f" > URL: {img_url}")
         return img_url
-    
     return None
 
 def download_image(img_url, session, output_path):
     try:
         time.sleep(uniform(0.5, 1.0))
-        r = session.get(img_url, stream=True, timeout=15)
+        r = session.get(img_url, stream=True, timeout=20)
         if r.status_code == 200:
             with open(output_path, 'wb') as f:
                 for chunk in r.iter_content(1024):
@@ -107,56 +106,64 @@ def download_image(img_url, session, output_path):
     except: return False
 
 def load_data():
-    if not os.path.exists(CSV_PATH): return None, 0
-    df = pd.read_csv(CSV_PATH)
+    if not os.path.exists(CSV_PATH): 
+        print(f"ERRO: Arquivo {CSV_PATH} não encontrado.")
+        return None, 0
+    
+    try:
+        df = pd.read_csv(CSV_PATH, sep=';')
+    except Exception as e:
+        print(f"Erro ao ler CSV: {e}")
+        return None, 0
+
     if 'caminho_imagem_local' not in df.columns: df['caminho_imagem_local'] = ''
     
-    start_index = 0
+    # Carrega progresso anterior para mesclar
     if os.path.exists(OUTPUT_CSV_PATH):
         try:
-            df_out = pd.read_csv(OUTPUT_CSV_PATH)
+            print("Carregando progresso anterior...")
+            df_out = pd.read_csv(OUTPUT_CSV_PATH, sep=';')
             if len(df_out) == len(df):
                 df['caminho_imagem_local'] = df_out['caminho_imagem_local']
-                processed = df[df['caminho_imagem_local'].notna() & (df['caminho_imagem_local'] != '')]
-                if not processed.empty: start_index = processed.index.max() + 1
         except: pass
+
+    # IMPORTANTE: Começa sempre do ZERO para revisar erros antigos.
+    # O script vai pular rapidinho o que já está pronto.
+    start_index = 0
     return df, start_index
 
 def run_scraper_session(df, start_index, total, session):
-    """
-    Roda uma sessão do navegador. 
-    Retorna o novo start_index onde parou (seja por sucesso ou erro).
-    """
-    
-    # Inicia o Playwright APENAS para esta sessão
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, args=["--start-maximized", "--disable-blink-features=AutomationControlled"])
-        context = browser.new_context(user_agent=HEADERS["User-Agent"], viewport={'width': 1280, 'height': 720})
+        args = ["--start-maximized", "--disable-blink-features=AutomationControlled"]
+        browser = p.chromium.launch(headless=False, args=args)
+        
+        context = browser.new_context(user_agent=HEADERS["User-Agent"], viewport={'width': 1366, 'height': 768})
         context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        context.add_init_script("window.navigator.chrome = { runtime: {} };")
+        
         page = context.new_page()
         
         try:
-            # Tenta rodar um lote de até 50 imagens antes de fechar preventivamente (opcional)
-            # ou até tomar o erro John Wick
             for i in range(start_index, total):
                 
-                # Salva a cada 10 para garantir
                 if (i - start_index) > 0 and i % 10 == 0:
-                    df.to_csv(OUTPUT_CSV_PATH, index=False)
+                    df.to_csv(OUTPUT_CSV_PATH, sep=';', index=False)
                     print(f"--- Parcial salvo na linha {i} ---")
 
-                # Pula processados
-                if str(df.iloc[i, df.columns.get_loc('caminho_imagem_local')]) not in ['nan', '']:
-                    continue
+                # --- LÓGICA DE REPESCAGEM ---
+                valor_celula = str(df.iloc[i, df.columns.get_loc('caminho_imagem_local')])
 
+                # 1. PULA se já tem sucesso (pasta downloaded_images E sem palavra ERRO)
+                if 'downloaded_images' in valor_celula and 'ERRO' not in valor_celula:
+                    continue
+                
+                # 2. Se caiu aqui, vai tentar baixar (Vazio ou Erro anterior)
                 url = df.iloc[i, 1]
                 if not isinstance(url, str) or 'http' not in url:
                     df.iloc[i, df.columns.get_loc('caminho_imagem_local')] = 'URL_INVALIDA'
                     continue
 
-                # --- AQUI PODE ACONTECER O ERRO 429 ---
                 img_url = get_image_url(page, url) 
-                # --------------------------------------
 
                 if img_url:
                     try:
@@ -169,31 +176,28 @@ def run_scraper_session(df, start_index, total, session):
                         if download_image(img_url, session, path):
                             df.iloc[i, df.columns.get_loc('caminho_imagem_local')] = path
                         else:
+                            # NOME EXATO DO ERRO PEDIDO
                             df.iloc[i, df.columns.get_loc('caminho_imagem_local')] = 'ERRO_DOWNLOAD'
                     except:
                         df.iloc[i, df.columns.get_loc('caminho_imagem_local')] = 'ERRO_IO'
                 else:
-                    df.iloc[i, df.columns.get_loc('caminho_imagem_local')] = 'ERRO_IMG_NOT_FOUND'
+                    # NOME EXATO DO ERRO PEDIDO
+                    df.iloc[i, df.columns.get_loc('caminho_imagem_local')] = 'ERRO_URL_NAO_ENCONTRADA'
 
-            # Se chegou aqui, acabou tudo
             return total 
 
         except JohnWickError:
-            print("\n" + "!"*40)
-            print("!!! BLOQUEIO 429 DETECTADO !!!")
-            print("Encerrando esta sessão do navegador imediatamente.")
-            print("!"*40 + "\n")
-            df.to_csv(OUTPUT_CSV_PATH, index=False) # Salva antes de morrer
-            # Ao sair do 'with sync_playwright', o navegador fecha sozinho
-            return i # Retorna o índice onde parou para tentar de novo depois
+            print("\n!!! BLOQUEIO 429 !!! Salvando...")
+            df.to_csv(OUTPUT_CSV_PATH, sep=';', index=False)
+            return i 
             
         except KeyboardInterrupt:
             raise KeyboardInterrupt
         
         except Exception as e:
-            print(f"Erro genérico na sessão: {e}")
-            df.to_csv(OUTPUT_CSV_PATH, index=False)
-            return i + 1 # Pula para o próximo se deu erro louco
+            print(f"Erro genérico: {e}")
+            df.to_csv(OUTPUT_CSV_PATH, sep=';', index=False)
+            return i + 1
 
 def main():
     df, start_index = load_data()
@@ -203,31 +207,38 @@ def main():
     session = requests.Session()
     session.headers.update(HEADERS)
 
-    # LOOP INFINITO DE SESSÕES
+    consecutive_blocks = 0
+
     while start_index < total:
-        print(f"\n>>> Iniciando nova sessão do navegador na linha {start_index} de {total}...")
+        print(f"\n>>> Verificando lista a partir da linha {start_index} de {total}...")
         
         try:
-            # Chama a função que abre o navegador.
-            # Ela vai rodar até acabar OU até tomar um erro 429.
             novo_index = run_scraper_session(df, start_index, total, session)
             
-            # Se o índice não mudou (ou seja, travou no mesmo lugar por 429)
             if novo_index == start_index:
-                print(f"Entrando em modo de espera (Cool Down) por {TEMPO_CASTIGO} segundos...")
+                consecutive_blocks += 1
                 
-                # Contagem regressiva visual
-                for k in range(TEMPO_CASTIGO, 0, -10):
+                if consecutive_blocks > LIMITE_TENTATIVAS_CURTAS:
+                    tempo_espera = TEMPO_CASTIGO_SEVERO
+                    print(f"\n[ALERTA] {consecutive_blocks} bloqueios seguidos.")
+                    print(f"Modo HIBERNAÇÃO por {tempo_espera/3600:.1f} horas...")
+                else:
+                    tempo_espera = TEMPO_CASTIGO_NORMAL
+                    print(f"\n[AVISO] Bloqueio. Esperando {tempo_espera/60:.0f} minutos...")
+
+                for k in range(tempo_espera, 0, -10):
                     print(f"Retomando em {k}s...", end='\r')
                     time.sleep(10)
-                print("\nAcordando para nova tentativa!\n")
+                print("\nReiniciando...\n")
+            
             else:
-                # Se avançou, atualizamos o índice mestre
                 start_index = novo_index
+                consecutive_blocks = 0
+                print("Lote finalizado com sucesso.")
 
         except KeyboardInterrupt:
-            print("\nScript parado pelo usuário. Salvando...")
-            df.to_csv(OUTPUT_CSV_PATH, index=False)
+            print("\nParado pelo usuário. Salvando...")
+            df.to_csv(OUTPUT_CSV_PATH, sep=';', index=False)
             break
             
     print("Processo finalizado.")
