@@ -32,11 +32,23 @@ Uma interface web para explorar a base de dados tratada, visualizando as estatí
 
 1. Clone o repositório:
 ```bash
- git clone https://github.com/Gfmonteiro04/WebScraping.git
-
+git clone https://github.com/Gfmonteiro04/WebScraping.git
+```
+2. Intale as dependencias
+```bash
 pip install -r requirements.txt
 playwright install chromium
-
+```
+3. Scraper para as imagens
+```bash
+python playwright_scraper.py
+```
+4.Scraper para os dados
+```bash
 python scraper_dados.py
+```
 
+5. Iniciar Pagina com as imagens
+```bash
 python app.py
+````
