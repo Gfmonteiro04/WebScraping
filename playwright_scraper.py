@@ -10,6 +10,8 @@ import re
 # ==========================================
 CSV_PATH = 'C:/Users/gfmon/Documents/scraper/BancoFinal_Tratado_KNN.csv'
 OUTPUT_CSV_PATH = 'C:/Users/gfmon/Documents/scraper/BancoFinal_Tratado_KNN.csv'
+CSV_PATH = 'C:/Users/ADM/WebScraping/BancoFinal_Seletos.csv'
+OUTPUT_CSV_PATH = 'BancoFinal_Completo.csv'
 
 # ==========================================
 # 1. NOVO SCRIPT JAVASCRIPT (Com Extração de Imagem)
