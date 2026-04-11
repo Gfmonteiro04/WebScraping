@@ -8,32 +8,27 @@ import re
 # ==========================================
 # CONFIGURAÇÕES
 # ==========================================
-CSV_PATH = 'C:/Users/gfmon/Downloads/BancoFinal_Seletos.csv'
-OUTPUT_CSV_PATH = 'BancoFinal_Completo.csv'
+CSV_PATH = 'C:/Users/gfmon/Documents/scraper/BancoFinal_Tratado_KNN.csv'
+OUTPUT_CSV_PATH = 'C:/Users/gfmon/Documents/scraper/BancoFinal_Tratado_KNN.csv'
 
 # ==========================================
-# 1. NOVO SCRIPT JAVASCRIPT (Lógica Linha-por-Linha)
+# 1. NOVO SCRIPT JAVASCRIPT (Com Extração de Imagem)
 # ==========================================
 SCRIPT_EXTRACAO = '''() => {
     function getChartWinner(titleKeyword, optionsList) {
-        // 1. Encontra todos os blocos visíveis que podem conter o gráfico
         const elements = Array.from(document.querySelectorAll('div.cell, div.grid-x, div'));
         
         let targetBlock = null;
         let minLength = 999999;
         const lastOption = optionsList[optionsList.length - 1];
 
-        // 2. Busca o MELHOR bloco: deve conter o Título E a Última Opção
-        // Isso evita pegar menus laterais ou textos aleatórios
         for (const el of elements) {
             const text = el.innerText;
             if (!text) continue;
             
-            // Verifica se tem "Longevity" (ex) e "Eternal" (ex) no mesmo bloco
             if (text.toLowerCase().includes(titleKeyword.toLowerCase()) && 
                 text.toLowerCase().includes(lastOption.toLowerCase())) {
                 
-                // Pega o menor bloco possível que contenha tudo (para evitar pegar a página inteira)
                 if (text.length < minLength && text.length > 50) {
                     minLength = text.length;
                     targetBlock = text;
@@ -43,8 +38,6 @@ SCRIPT_EXTRACAO = '''() => {
 
         if (!targetBlock) return "N/A";
 
-        // 3. Processamento Linha-por-Linha (Correção do Erro de Leitura)
-        // Quebra o texto em linhas para analisar cada opção separadamente
         const lines = targetBlock.split(/\\r?\\n/);
         
         let winner = "N/A";
@@ -54,59 +47,58 @@ SCRIPT_EXTRACAO = '''() => {
         for (const option of optionsList) {
             let optionVotes = 0;
             
-            // Procura este opção em cada linha do bloco
             for (const line of lines) {
                 const cleanLine = line.trim().toLowerCase();
                 const cleanOption = option.toLowerCase();
 
-                // Verifica se a linha COMEÇA com a opção (evita confundir "Weak" com "Very Weak")
                 if (cleanLine.startsWith(cleanOption)) {
-                    // Tenta extrair o número no final da linha
-                    // Ex: "Moderate 15" ou "Moderate ... 15"
                     const match = cleanLine.match(/(\d+)$/);
                     if (match) {
                         optionVotes = parseInt(match[1]);
-                        break; // Achou, para de procurar essa opção
+                        break; 
                     }
                 }
             }
 
             totalVotesGlobal += optionVotes;
 
-            // Atualiza o vencedor
             if (optionVotes > maxVotes) {
                 maxVotes = optionVotes;
                 winner = option;
             }
         }
         
-        // Se a soma de todos os votos for 0, retorna Sem Votos
         if (totalVotesGlobal === 0) return "Sem Votos";
         
         return winner;
+    }
+
+    // NOVA FUNÇÃO: Pega a URL da imagem principal do perfume
+    function getImageUrl() {
+        const imgEl = document.querySelector('img[itemprop="image"]');
+        return imgEl ? imgEl.src : "N/A";
     }
 
     return {
         longevity: getChartWinner("Longevity", ["very weak", "weak", "moderate", "long lasting", "eternal"]),
         sillage: getChartWinner("Sillage", ["intimate", "moderate", "strong", "enormous"]),
         gender: getChartWinner("Gender", ["female", "more female", "unisex", "more male", "male"]),
-        price: getChartWinner("Price Value", ["way overpriced", "overpriced", "ok", "good value", "great value"])
+        price: getChartWinner("Price Value", ["way overpriced", "overpriced", "ok", "good value", "great value"]),
+        image_url: getImageUrl() // Adicionado aqui
     };
 }'''
 
 # ==========================================
-# 2. SCROLL REFINADO (Para ativar Lazy Loading)
+# 2. SCROLL REFINADO
 # ==========================================
 def human_scroll(page):
     try:
         print("   > Escaneando página para carregar gráficos...")
-        # Desce a página em "chunks" visuais
         viewport_height = page.viewport_size['height']
         for _ in range(8): 
             page.mouse.wheel(0, viewport_height * 0.7)
             time.sleep(uniform(0.5, 0.8))
         
-        # Sobe um pouco para garantir que o meio da página (onde estão os gráficos) foi renderizado
         page.mouse.wheel(0, -2000)
         time.sleep(1.5)
     except: pass
@@ -134,10 +126,11 @@ def run_data_scraper(df, start_index, total):
                     df.to_csv(OUTPUT_CSV_PATH, sep=';', index=False)
                     print(f"--- Backup na linha {i} ---")
 
-                # Verifica se já tem dados (para pular)
-                if 'Longevidade' in df.columns:
-                    val = str(df.iloc[i, df.columns.get_loc('Longevidade')])
-                    if val not in ['nan', '', 'NaN', 'ERRO', 'N/A', 'Sem Votos']:
+                # Modificado para verificar também se a Imagem_URL está vazia
+                if 'Longevidade' in df.columns and 'Imagem_URL' in df.columns:
+                    val_long = str(df.iloc[i, df.columns.get_loc('Longevidade')])
+                    val_img = str(df.iloc[i, df.columns.get_loc('Imagem_URL')])
+                    if val_long not in ['nan', '', 'NaN', 'ERRO', 'N/A', 'Sem Votos'] and val_img not in ['nan', '', 'NaN', 'N/A']:
                         continue
 
                 url = df.iloc[i, 1] 
@@ -171,6 +164,7 @@ def run_data_scraper(df, start_index, total):
                     sillage = str(dados.get('sillage', 'N/A')).title()
                     gender = str(dados.get('gender', 'N/A')).title()
                     price = str(dados.get('price', 'N/A')).title()
+                    image_url = str(dados.get('image_url', 'N/A')) # Extrai o link da imagem
 
                     # Segunda tentativa se falhar
                     if longevity == "N/A" and gender == "N/A":
@@ -185,13 +179,15 @@ def run_data_scraper(df, start_index, total):
                         sillage = str(dados.get('sillage', 'N/A')).title()
                         gender = str(dados.get('gender', 'N/A')).title()
                         price = str(dados.get('price', 'N/A')).title()
+                        image_url = str(dados.get('image_url', 'N/A'))
 
                     df.loc[i, 'Longevidade'] = longevity
                     df.loc[i, 'Sillage'] = sillage
                     df.loc[i, 'Genero_Voto'] = gender
                     df.loc[i, 'Preco_Voto'] = price
+                    df.loc[i, 'Imagem_URL'] = image_url # Salva no DataFrame
 
-                    print(f"   > Resultado: L:{longevity} | S:{sillage} | G:{gender} | $:{price}")
+                    print(f"   > Resultado: L:{longevity} | S:{sillage} | Img: {image_url[:30]}...")
                     
                     time.sleep(uniform(4.0, 7.0))
 
@@ -218,7 +214,8 @@ def main():
     try: df = pd.read_csv(CSV_PATH, sep=';')
     except: df = pd.read_csv(CSV_PATH, sep=',')
 
-    cols = ['Longevidade', 'Sillage', 'Genero_Voto', 'Preco_Voto']
+    # Adicionada a coluna Imagem_URL para ser criada caso não exista
+    cols = ['Longevidade', 'Sillage', 'Genero_Voto', 'Preco_Voto', 'Imagem_URL']
     for col in cols:
         if col not in df.columns: df[col] = ''
 
