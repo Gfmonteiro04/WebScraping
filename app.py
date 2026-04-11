@@ -7,24 +7,18 @@ st.set_page_config(page_title="Catálogo de Perfumes Seletos", layout="wide")
 
 st.title("👃 Catálogo de Perfumes Seletos")
 
-# --- CARREGAMENTO DE DADOS (ATUALIZADO PARA NOVA BASE) ---
+# --- CARREGAMENTO DE DADOS ---
 @st.cache_data 
 def load_data():
-    # Caminho do arquivo que o robô está gerando
-    arquivo_atual = 'BancoFinal_Seletos_Atualizado.csv'
+    # Agora lê exatamente o nome do arquivo que você enviou
+    arquivo_atual = 'BancoFinal_Tratado.csv'
     
     if os.path.exists(arquivo_atual):
-        # IMPORTANTE: Adicionado sep=';'
         df = pd.read_csv(arquivo_atual, sep=';')
-        
-    elif os.path.exists('BancoFinal_Seletos.csv'):
-        st.warning("Carregando base original (sem imagens novas).")
-        df = pd.read_csv('BancoFinal_Seletos.csv', sep=';')
-        
     else:
         return None
     
-    # Limpeza de dados
+    # Limpeza de dados para visualização
     df = df.astype(str)
     df = df.replace('nan', '')
     
@@ -33,19 +27,28 @@ def load_data():
 df = load_data()
 
 if df is None:
-    st.error("Nenhum arquivo CSV encontrado (BancoFinal_Seletos.csv ou Atualizado).")
+    st.error("Arquivo 'BancoFinal_Tratado.csv' não encontrado na pasta atual.")
     st.stop()
 
 # --- BARRA LATERAL (FILTROS) ---
 st.sidebar.header("Filtros")
 
-# Filtro de Texto
-# Na nova base, a coluna do nome é a terceira (índice 2), chamada 'Perfume'
-coluna_nome = df.columns[2] 
+coluna_nome = 'Perfume' 
 busca_nome = st.sidebar.text_input("Buscar Perfume", "")
 
-# Filtro de Imagem
-mostrar_apenas_com_foto = st.sidebar.checkbox("Apenas com foto baixada", value=False)
+# Filtros para os dados de performance
+coluna_sillage = 'Sillage'
+if coluna_sillage in df.columns:
+    filtro_sillage = st.sidebar.multiselect("Projeção (Sillage)", df[coluna_sillage].unique())
+else:
+    filtro_sillage = []
+
+coluna_longevidade = 'Longevidade'
+if coluna_longevidade in df.columns:
+    filtro_longevidade = st.sidebar.multiselect("Longevidade", df[coluna_longevidade].unique())
+else:
+    filtro_longevidade = []
+
 
 # --- APLICAÇÃO DOS FILTROS ---
 df_filtrado = df.copy()
@@ -53,13 +56,11 @@ df_filtrado = df.copy()
 if busca_nome:
     df_filtrado = df_filtrado[df_filtrado[coluna_nome].str.contains(busca_nome, case=False, na=False)]
 
-if mostrar_apenas_com_foto and 'caminho_imagem_local' in df_filtrado.columns:
-    df_filtrado = df_filtrado[
-        (df_filtrado['caminho_imagem_local'] != 'nan') & 
-        (df_filtrado['caminho_imagem_local'] != '') & 
-        (df_filtrado['caminho_imagem_local'] != 'IMAGEM_NAO_ENCONTRADA') &
-        (df_filtrado['caminho_imagem_local'].str.contains('downloaded_images'))
-    ]
+if filtro_sillage:
+    df_filtrado = df_filtrado[df_filtrado[coluna_sillage].isin(filtro_sillage)]
+
+if filtro_longevidade:
+    df_filtrado = df_filtrado[df_filtrado[coluna_longevidade].isin(filtro_longevidade)]
 
 # Mostra total
 st.markdown(f"**Total na lista:** {len(df_filtrado)}")
@@ -75,29 +76,37 @@ for row in rows:
         
         with col:
             with st.container(border=True):
-                # 1. Imagem
+                # 1. Imagem via arquivo local (Correção aplicada aqui)
                 img_path = dados.get('caminho_imagem_local', '')
                 
-                # Se o caminho tiver barra invertida do Windows (\), o Python às vezes reclama no Linux/Web
-                # Vamos normalizar só por garantia
-                if img_path:
+                if img_path and img_path not in ['nan', '', 'N/A', 'IMAGEM_NAO_ENCONTRADA']:
+                    # Transforma a barra do Windows (\) em barra universal (/)
                     img_path = img_path.replace('\\', '/')
-
-                if img_path and os.path.exists(img_path):
-                    st.image(img_path, use_container_width=True)
+                    
+                    if os.path.exists(img_path):
+                        st.image(img_path, use_container_width=True)
+                    else:
+                        st.markdown(f"📷 *Imagem não encontrada na pasta*")
                 else:
                     st.markdown("📷 *Sem Imagem*")
                 
                 # 2. Nome
-                st.subheader(dados[coluna_nome])
+                if coluna_nome in dados:
+                    st.subheader(dados[coluna_nome].replace('-', ' ').title())
                 
-                # 3. Informações Extras (Brand, Country)
-                # Na sua base nova, Brand é coluna 3 e Country é 4
+                # 3. Informações Extras
                 marca = dados.get('Brand', '')
-                pais = dados.get('Country', '')
-                if marca: st.caption(f"Marca: {marca} ({pais})")
+                if marca: st.caption(f"**Marca:** {marca.title()}")
+
+                # Estatísticas
+                st.write(f"**⏳ Longevidade:** {dados.get('Longevidade', 'N/A')}")
+                st.write(f"**💨 Projeção:** {dados.get('Sillage', 'N/A')}")
+                
+                genero = dados.get('Genero', dados.get('Genero_Voto', 'N/A'))
+                if genero and genero != 'N/A':
+                    st.write(f"**👤 Gênero:** {genero}")
                 
                 # 4. Link
                 url = dados.get('url', '')
                 if 'http' in str(url):
-                    st.link_button("Ver no Site", url)
+                    st.link_button("Ver no Fragrantica", url)
